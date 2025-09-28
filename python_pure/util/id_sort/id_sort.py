@@ -10,7 +10,7 @@ from PyQt5.QtCore import Qt
 class ExcelSplitter(QWidget):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("九联电力ID拆分器V0.1版")
+        self.setWindowTitle("九联电力ID拆分器V0.2版")
         self.resize(700, 600)
         self.setAcceptDrops(True)  # ✅ 启用拖拽
 
@@ -112,7 +112,7 @@ class ExcelSplitter(QWidget):
     def load_headers(self):
         try:
             self.sheet_name = self.sheet_combo.currentText()
-            self.df = pd.read_excel(self.file_path, sheet_name=self.sheet_name)
+            self.df = pd.read_excel(self.file_path, sheet_name=self.sheet_name, dtype=str)  # ✅ 全部读为字符串
             self.headers = list(self.df.columns)
 
             # 清空旧的
@@ -146,7 +146,7 @@ class ExcelSplitter(QWidget):
                 self.parts_frame.itemAt(i).widget().deleteLater()
             self.spin_boxes.clear()
 
-            for i in range(self.n_parts - 1):
+            for i in range(self.n_parts - 1):  # ✅ 只输入前 N-1 份
                 row = QHBoxLayout()
                 row.addWidget(QLabel(f"第 {i+1} 份:"))
                 entry = QLineEdit()
@@ -169,9 +169,12 @@ class ExcelSplitter(QWidget):
                 if self.chip_checkbox.isVisible() and self.chip_checkbox.isChecked():
                     df["芯片ID"] = df["芯片ID"].astype(str).str.slice(0, 48)
 
+                # ✅ 所有列转成字符串，避免科学计数法
+                df = df.astype(str)
+
                 total_rows = len(df)
                 specified_rows = [int(e.text()) for e in self.spin_boxes if e.text().isdigit()]
-                last_rows = total_rows - sum(specified_rows)
+                last_rows = total_rows - sum(specified_rows)  # ✅ 自动计算最后一份
 
                 if last_rows <= 0:
                     QMessageBox.critical(self, "错误", "行数分配不合理")
