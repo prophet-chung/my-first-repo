@@ -11,7 +11,7 @@ from PyQt5.QtCore import Qt
 class TxtToExcel(QWidget):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("九联电力芯片ID转换工具")
+        self.setWindowTitle("九联电力芯片ID转换工具V0.2版")
         self.resize(400, 200)
         self.setAcceptDrops(True)  # ✅ 支持拖拽
 
@@ -72,7 +72,8 @@ class TxtToExcel(QWidget):
             if self.chk_limit.isChecked():
                 chip_ids = [cid[:48] for cid in chip_ids]
 
-            df = pd.DataFrame(chip_ids, columns=["芯片ID"])
+            # ✅ 全部转为字符串
+            df = pd.DataFrame([str(cid) for cid in chip_ids], columns=["芯片ID"])
 
             base_name, _ = os.path.splitext(self.file_path)
             output_file = base_name + ".xlsx"
@@ -82,7 +83,24 @@ class TxtToExcel(QWidget):
                 output_file = f"{base_name}_{counter}.xlsx"
                 counter += 1
 
-            df.to_excel(output_file, index=False, engine="openpyxl")
+            # ✅ 用 xlsxwriter 保存，表头左对齐，列宽自适应
+            with pd.ExcelWriter(output_file, engine="xlsxwriter") as writer:
+                df.to_excel(writer, index=False, sheet_name="Sheet1")
+                workbook = writer.book
+                worksheet = writer.sheets["Sheet1"]
+
+                # 表头左对齐
+                header_format = workbook.add_format({
+                    "align": "left",
+                    "valign": "vcenter",
+                    "bold": True
+                })
+                worksheet.write(0, 0, "芯片ID", header_format)
+
+                # 列宽自适应
+                max_len = max(df["芯片ID"].astype(str).map(len).max(), len("芯片ID")) + 2
+                worksheet.set_column(0, 0, max_len)
+
             QMessageBox.information(self, "完成", f"Excel 导出成功！\n{output_file}")
         except Exception as e:
             QMessageBox.critical(self, "错误", f"导出失败: {str(e)}")
