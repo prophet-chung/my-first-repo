@@ -1,208 +1,206 @@
-import sys
 import os
 import pandas as pd
 from PyQt5.QtWidgets import (
-    QApplication, QWidget, QVBoxLayout, QLabel, QLineEdit,
-    QHBoxLayout, QMessageBox, QCheckBox, QPushButton
+    QApplication, QWidget, QVBoxLayout, QLabel, QPushButton, QFileDialog,
+    QComboBox, QCheckBox, QLineEdit, QMessageBox, QFrame, QHBoxLayout, QScrollArea
 )
 from PyQt5.QtCore import Qt
 
 
-class SplitExcelApp(QWidget):
+class ExcelSplitter(QWidget):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Excel 拆分工具（拖拽 + 自动识别芯片ID + 序号_大小命名）")
-        self.resize(540, 420)
-        self.setAcceptDrops(True)
+        self.setWindowTitle("九联电力ID拆分器V0.1版")
+        self.resize(700, 600)
+        self.setAcceptDrops(True)  # ✅ 启用拖拽
+
+        self.file_path = None
+        self.sheet_name = None
+        self.df = None
+        self.headers = []
+        self.checkboxes = []
+        self.chip_checkbox = None
+        self.spin_boxes = []
+        self.n_parts = 0
 
         self.layout = QVBoxLayout()
-
-        # 文件状态显示
-        self.file_label = QLabel("请拖拽 Excel 文件到窗口中（支持 .xls/.xlsx）\n输出文件统一为 .xlsx 格式")
-        self.file_label.setStyleSheet("color: blue; font-weight: bold;")
-        self.layout.addWidget(self.file_label)
-
-        # 输入 N
-        self.n_label = QLabel("请输入要拆分的表格数量 N：")
-        self.n_input = QLineEdit()
-        self.n_input.setPlaceholderText("例如：2 或 3")
-        self.layout.addWidget(self.n_label)
-        self.layout.addWidget(self.n_input)
-
-        # 生成输入框按钮
-        self.btn_next = QPushButton("生成行数输入框")
-        self.btn_next.clicked.connect(self.prepare_inputs)
-        self.layout.addWidget(self.btn_next)
-
-        # 行数输入区（动态）
-        self.inputs_layout = QVBoxLayout()
-        self.layout.addLayout(self.inputs_layout)
-
-        # 👉 占位符：芯片ID复选框稍后动态创建
-        self.chk_trim_chipid = None
-
-        # 拆分按钮
-        self.btn_split = QPushButton("开始拆分")
-        self.btn_split.clicked.connect(self.split_excel)
-        self.layout.addWidget(self.btn_split)
-
         self.setLayout(self.layout)
 
-        # 状态
-        self.filepath = None
-        self.data = None
-        self.line_inputs = []
-        self.col_chipid = None  # 识别到的芯片ID列索引
+        # 文件提示
+        self.label_file = QLabel("拖动 Excel 文件到此处，或点击按钮选择")
+        self.layout.addWidget(self.label_file)
+
+        # 按钮 - 选择文件
+        self.btn_file = QPushButton("选择 Excel 文件")
+        self.btn_file.clicked.connect(self.load_file_dialog)
+        self.layout.addWidget(self.btn_file)
+
+        # sheet 选择
+        self.sheet_combo = QComboBox()
+        self.sheet_combo.currentIndexChanged.connect(self.load_headers)
+        self.layout.addWidget(QLabel("选择 Sheet:"))
+        self.layout.addWidget(self.sheet_combo)
+
+        # 表头选择（可滚动）
+        self.scroll_area = QScrollArea()
+        self.scroll_area.setWidgetResizable(True)
+        self.headers_frame = QFrame()
+        self.headers_layout = QVBoxLayout()
+        self.headers_frame.setLayout(self.headers_layout)
+        self.scroll_area.setWidget(self.headers_frame)
+        self.layout.addWidget(self.scroll_area)
+
+        # 芯片ID选项
+        self.chip_checkbox = QCheckBox("仅保留芯片ID前48个字符")
+        self.layout.addWidget(self.chip_checkbox)
+        self.chip_checkbox.hide()  # 默认隐藏
+
+        # 拆分设置
+        split_frame = QHBoxLayout()
+        split_frame.addWidget(QLabel("拆分份数 N:"))
+        self.entry_n = QLineEdit()
+        self.entry_n.setFixedWidth(60)
+        split_frame.addWidget(self.entry_n)
+        self.btn_set_n = QPushButton("确认")
+        self.btn_set_n.clicked.connect(self.set_n_parts)
+        split_frame.addWidget(self.btn_set_n)
+        self.layout.addLayout(split_frame)
+
+        self.parts_frame = QVBoxLayout()
+        self.layout.addLayout(self.parts_frame)
+
+        # 开始按钮
+        self.btn_split = QPushButton("开始拆分")
+        self.btn_split.clicked.connect(self.split_excel)
+        self.btn_split.setEnabled(False)
+        self.layout.addWidget(self.btn_split)
 
     # 拖拽进入
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls():
             event.acceptProposedAction()
 
-    # 拖拽放下
+    # 拖拽释放
     def dropEvent(self, event):
         urls = event.mimeData().urls()
-        if not urls:
-            return
-        filepath = urls[0].toLocalFile()
-        if filepath.lower().endswith((".xls", ".xlsx")):
-            self.load_file(filepath)
-        else:
-            QMessageBox.warning(self, "错误", "仅支持 Excel 文件（.xls, .xlsx）")
+        if urls:
+            file_path = urls[0].toLocalFile()
+            if file_path.endswith((".xls", ".xlsx")):
+                self.load_file(file_path)
 
-    def load_file(self, filepath):
+    # 按钮选择文件
+    def load_file_dialog(self):
+        file_path, _ = QFileDialog.getOpenFileName(self, "选择 Excel 文件", "", "Excel Files (*.xls *.xlsx)")
+        if file_path:
+            self.load_file(file_path)
+
+    # 公共加载文件
+    def load_file(self, file_path):
+        self.file_path = file_path
+        self.label_file.setText(f"已选择文件: {os.path.basename(file_path)}")
         try:
-            self.filepath = filepath
-            self.data = pd.read_excel(filepath, header=None)
-
-            # 识别芯片ID列
-            header_row = self.data.iloc[0].astype(str).tolist()
-            self.col_chipid = None
-            for idx, name in enumerate(header_row):
-                if "芯片ID" in name:
-                    self.col_chipid = idx
-                    break
-
-            total = max(len(self.data) - 1, 0)
-            msg = f"已加载：{filepath}\n总数据行（不含表头）：{total}"
-
-            # 👉 如果有芯片ID，就显示复选框；没有就移除
-            if self.col_chipid is not None:
-                msg += f"\n识别到芯片ID列：第 {self.col_chipid + 1} 列"
-                if not self.chk_trim_chipid:
-                    self.chk_trim_chipid = QCheckBox("仅保留芯片ID前48个字符（勾选则裁剪）")
-                    self.layout.insertWidget(self.layout.count() - 1, self.chk_trim_chipid)
-            else:
-                msg += "\n⚠️ 未识别到‘芯片ID’列"
-                if self.chk_trim_chipid:
-                    self.layout.removeWidget(self.chk_trim_chipid)
-                    self.chk_trim_chipid.deleteLater()
-                    self.chk_trim_chipid = None
-
-            self.file_label.setText(msg)
-
+            xls = pd.ExcelFile(self.file_path)
+            self.sheet_combo.clear()
+            self.sheet_combo.addItems(xls.sheet_names)
+            if xls.sheet_names:
+                self.sheet_combo.setCurrentIndex(0)
+                self.load_headers()
         except Exception as e:
-            QMessageBox.critical(self, "读取失败", f"无法读取文件：{e}")
+            QMessageBox.critical(self, "错误", f"无法读取 Excel 文件: {str(e)}")
 
-    def prepare_inputs(self):
-        while self.inputs_layout.count():
-            item = self.inputs_layout.takeAt(0)
-            w = item.widget()
-            if w:
-                w.deleteLater()
-        self.line_inputs = []
-
+    # 加载表头
+    def load_headers(self):
         try:
-            n = int(self.n_input.text())
-            if n < 2:
-                QMessageBox.warning(self, "错误", "N 必须 >= 2")
-                return
+            self.sheet_name = self.sheet_combo.currentText()
+            self.df = pd.read_excel(self.file_path, sheet_name=self.sheet_name)
+            self.headers = list(self.df.columns)
+
+            # 清空旧的
+            for i in reversed(range(self.headers_layout.count())):
+                self.headers_layout.itemAt(i).widget().deleteLater()
+            self.checkboxes.clear()
+
+            # 生成复选框
+            for col in self.headers:
+                chk = QCheckBox(col)
+                chk.setChecked(True)
+                self.headers_layout.addWidget(chk)
+                self.checkboxes.append((col, chk))
+
+            # 芯片ID选项
+            if "芯片ID" in self.headers:
+                self.chip_checkbox.show()
+            else:
+                self.chip_checkbox.hide()
+
+            self.btn_split.setEnabled(True)
+        except Exception as e:
+            QMessageBox.critical(self, "错误", f"无法读取表头: {str(e)}")
+
+    # 设置份数
+    def set_n_parts(self):
+        try:
+            self.n_parts = int(self.entry_n.text())
+            # 清空旧控件
+            for i in reversed(range(self.parts_frame.count())):
+                self.parts_frame.itemAt(i).widget().deleteLater()
+            self.spin_boxes.clear()
+
+            for i in range(self.n_parts - 1):
+                row = QHBoxLayout()
+                row.addWidget(QLabel(f"第 {i+1} 份:"))
+                entry = QLineEdit()
+                entry.setFixedWidth(80)
+                row.addWidget(entry)
+                self.parts_frame.addLayout(row)
+                self.spin_boxes.append(entry)
         except ValueError:
-            QMessageBox.warning(self, "错误", "请输入有效的整数 N")
-            return
+            QMessageBox.warning(self, "警告", "请输入有效整数")
 
-        for i in range(n - 1):
-            row = QHBoxLayout()
-            label = QLabel(f"子表格 {i + 1} 行数：")
-            line_edit = QLineEdit()
-            line_edit.setPlaceholderText("输入正整数（例如：5000）")
-            row.addWidget(label)
-            row.addWidget(line_edit)
-            self.inputs_layout.addLayout(row)
-            self.line_inputs.append(line_edit)
-
+    # 拆分
     def split_excel(self):
-        if not self.filepath or self.data is None:
-            QMessageBox.warning(self, "错误", "请先拖拽并加载 Excel 文件！")
-            return
-
-        try:
-            n = int(self.n_input.text())
-        except ValueError:
-            QMessageBox.warning(self, "错误", "请输入有效的 N")
-            return
-
-        total_rows = len(self.data) - 1
-        if total_rows <= 0:
-            QMessageBox.warning(self, "错误", "文件中没有有效数据行")
-            return
-
-        sizes = []
-        for i, line_edit in enumerate(self.line_inputs):
+        if not self.df is None and self.n_parts > 0:
             try:
-                val = int(line_edit.text())
-                if val <= 0:
-                    raise ValueError
-                sizes.append(val)
-            except Exception:
-                QMessageBox.warning(self, "错误", f"子表格 {i+1} 行数输入无效")
-                return
+                # 选择列
+                selected_cols = [col for col, chk in self.checkboxes if chk.isChecked()]
+                df = self.df[selected_cols].copy()
 
-        sum_sizes = sum(sizes)
-        last_size = total_rows - sum_sizes
-        if last_size <= 0:
-            QMessageBox.warning(self, "错误", f"行数分配错误：总数据行数为 {total_rows}，已分配 {sum_sizes}")
-            return
-        sizes.append(last_size)
+                # 芯片ID处理
+                if self.chip_checkbox.isVisible() and self.chip_checkbox.isChecked():
+                    df["芯片ID"] = df["芯片ID"].astype(str).str.slice(0, 48)
 
-        header = self.data.iloc[[0]]
-        df_data = self.data.iloc[1:].copy()
+                total_rows = len(df)
+                specified_rows = [int(e.text()) for e in self.spin_boxes if e.text().isdigit()]
+                last_rows = total_rows - sum(specified_rows)
 
-        # 👉 仅当复选框存在且勾选时，才裁剪
-        if self.chk_trim_chipid and self.chk_trim_chipid.isChecked():
-            try:
-                df_data.iloc[:, self.col_chipid] = df_data.iloc[:, self.col_chipid].astype(str).str.slice(0, 48)
+                if last_rows <= 0:
+                    QMessageBox.critical(self, "错误", "行数分配不合理")
+                    return
+
+                row_counts = specified_rows + [last_rows]
+                base_name, _ = os.path.splitext(os.path.basename(self.file_path))
+                output_dir = os.path.dirname(self.file_path)
+
+                start = 0
+                for i, rows in enumerate(row_counts, 1):
+                    df_part = df.iloc[start:start + rows]
+                    start += rows
+                    output_file = os.path.join(output_dir, f"{base_name}_split_{i}_{rows}.xlsx")
+                    counter = 1
+                    while os.path.exists(output_file):
+                        output_file = os.path.join(output_dir, f"{base_name}_split_{i}_{rows}_{counter}.xlsx")
+                        counter += 1
+                    df_part.to_excel(output_file, index=False, engine="openpyxl")
+
+                QMessageBox.information(self, "完成", "Excel 拆分完成！")
             except Exception as e:
-                QMessageBox.warning(self, "警告", f"裁剪芯片ID时出错：{e}")
-
-        saved_files = []
-        start = 0
-        base_no_ext = os.path.splitext(self.filepath)[0]
-
-        for i, size in enumerate(sizes, start=1):
-            part = df_data.iloc[start:start + size]
-            part_df = pd.concat([header, part])
-            save_path = f"{base_no_ext}_split_{i}_{size}.xlsx"
-
-            if os.path.exists(save_path):
-                k = 1
-                while True:
-                    alt = f"{base_no_ext}_split_{i}_{size}_dup{k}.xlsx"
-                    if not os.path.exists(alt):
-                        save_path = alt
-                        break
-                    k += 1
-
-            part_df.to_excel(save_path, index=False, header=False)
-            saved_files.append(save_path)
-            start += size
-
-        msg = "拆分完成，生成文件：\n" + "\n".join(saved_files)
-        QMessageBox.information(self, "完成", msg)
+                QMessageBox.critical(self, "错误", str(e))
+        else:
+            QMessageBox.warning(self, "警告", "请先选择文件并设置拆分份数")
 
 
 if __name__ == "__main__":
-    app = QApplication(sys.argv)
-    window = SplitExcelApp()
-    window.show()
-    sys.exit(app.exec_())
+    app = QApplication([])
+    win = ExcelSplitter()
+    win.show()
+    app.exec_()
