@@ -10,9 +10,9 @@ from PyQt5.QtCore import Qt
 class ExcelSplitter(QWidget):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("九联电力ID拆分器V0.2版")
+        self.setWindowTitle("九联电力ID拆分器V0.3版")
         self.resize(700, 600)
-        self.setAcceptDrops(True)  # ✅ 启用拖拽
+        self.setAcceptDrops(True)  # ✅ 支持拖拽
 
         self.file_path = None
         self.sheet_name = None
@@ -169,7 +169,7 @@ class ExcelSplitter(QWidget):
                 if self.chip_checkbox.isVisible() and self.chip_checkbox.isChecked():
                     df["芯片ID"] = df["芯片ID"].astype(str).str.slice(0, 48)
 
-                # ✅ 所有列转成字符串，避免科学计数法
+                # ✅ 所有列转成字符串
                 df = df.astype(str)
 
                 total_rows = len(df)
@@ -193,7 +193,26 @@ class ExcelSplitter(QWidget):
                     while os.path.exists(output_file):
                         output_file = os.path.join(output_dir, f"{base_name}_split_{i}_{rows}_{counter}.xlsx")
                         counter += 1
-                    df_part.to_excel(output_file, index=False, engine="openpyxl")
+
+                    # ✅ 用 xlsxwriter 保存，表头左对齐，列宽自适应
+                    with pd.ExcelWriter(output_file, engine="xlsxwriter") as writer:
+                        df_part.to_excel(writer, index=False, sheet_name="Sheet1")
+                        workbook = writer.book
+                        worksheet = writer.sheets["Sheet1"]
+
+                        # 表头左对齐
+                        header_format = workbook.add_format({
+                            "align": "left",
+                            "valign": "vcenter",
+                            "bold": True
+                        })
+                        for col_num, value in enumerate(df_part.columns.values):
+                            worksheet.write(0, col_num, value, header_format)
+
+                        # 列宽自适应
+                        for i_col, col in enumerate(df_part.columns):
+                            max_len = max(df_part[col].astype(str).map(len).max(), len(str(col))) + 2
+                            worksheet.set_column(i_col, i_col, max_len)
 
                 QMessageBox.information(self, "完成", "Excel 拆分完成！")
             except Exception as e:
